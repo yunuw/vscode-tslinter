@@ -1,0 +1,61 @@
+{
+	"name": "vscode-tslinter",
+	"description": "The vscode-tslinter extension's client side implementation",
+	"author": "Yun Wu",
+	"license": "MIT",
+	"version": "0.0.1",
+	"publisher": "yunwu",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/yunuw/vscode-tslinter"
+	},
+	"engines": {
+		"vscode": "^1.16.0"
+	},
+	"categories": [
+		"Other"
+	],
+	"activationEvents": [
+		"onLanguage:typescript"
+	],
+	"main": "./out/src/extension",
+	"contributes": {
+		"menus": {
+			"editor/context": [
+				{
+					"when": "resourceLangId == typescript",
+					"command": "typescript.runTSLint",
+					"group": "TSLint"
+				},
+				{
+					"when": "resourceLangId == typescript",
+					"command": "typescript.fixTSLintError",
+					"group": "TSLint"
+				}
+			]
+		},
+		"commands": [
+			{
+				"command": "typescript.runTSLint",
+				"title": "Run tslint",
+				"category": "Typescript'"
+			},
+			{
+				"command": "typescript.fixTSLintError",
+				"title": "Fix tslint",
+				"category": "Typescript"
+			}
+		]
+	},
+	"scripts": {
+		"vscode:prepublish": "tsc -p ./",
+		"compile": "tsc -p ./",
+		"watch": "tsc -w -p ./",
+		"update-vscode": "node ./node_modules/vscode/bin/install",
+		"postinstall": "node ./node_modules/vscode/bin/install"
+	},
+	"dependencies": {
+		"vscode": "^1.1.5",
+		"vscode-languageclient": "^3.5.0"
+	}
+}

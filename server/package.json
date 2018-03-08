@@ -1,0 +1,28 @@
+{
+	"name": "vscode-tslinter",
+	"description": "Implementation of the language server for vscode-tslinter extension.",
+	"version": "0.0.1",
+	"author": "Yun Wu & Wang Chen",
+	"license": "MIT",
+	"engines": {
+		"node": "*"
+	},
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/yunuw/vscode-tslinter"
+	},
+	"devDependencies": {
+		"tslint": "5.9.1",
+		"@types/semver": "^5.3.30"
+	},
+	"dependencies": {
+		"vscode-languageserver": "^3.5.0",
+		"vscode-uri": "^1.0.1",
+		"semver": "^5.1.0"
+	},
+	"scripts": {
+		"installServer": "installServerIntoExtension ../client ./package.json ./tsconfig.json",
+		"compile": "installServerIntoExtension ../client ./package.json ./tsconfig.json && tsc -p .",
+		"watch": "installServerIntoExtension ../client ./package.json ./tsconfig.json && tsc -w -p ."
+	}
+}
