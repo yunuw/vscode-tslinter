@@ -71,12 +71,9 @@ function trace(message: string, verbose?: string): void {
 	connection.tracer.log(message, verbose);
 }
 
-documents.onDidOpen(async (event) => {
-	trace('onDidOpen ' + event.document.uri);
-});
-
-documents.onDidChangeContent(async (event) => {
-	trace('onDidChangeContent' + event.document.uri);
+documents.onDidClose((event) => {
+	// clear the result if the document is closed
+	connection.sendDiagnostics({ uri: event.document.uri, diagnostics: [] });
 });
 
 connection.onRequest(RunTSLintRequest.type, async (params) => {
