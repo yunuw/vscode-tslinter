@@ -15,6 +15,3 @@ Refer this doc https://palantir.github.io/tslint/rules/ and see what rules can b
 1. Install npm module at the root, client, server folder separately
 2. At root folder, run ```npm run compile:server```
 3. Start debugging by pressing F5
-
-# Limitation
-This plugin only works in Windows environment
