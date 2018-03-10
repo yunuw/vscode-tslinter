@@ -25,12 +25,12 @@
 				{
 					"when": "resourceLangId == typescript",
 					"command": "typescript.runTSLint",
-					"group": "TSLint"
+					"group": "TSLint@1"
 				},
 				{
 					"when": "resourceLangId == typescript",
 					"command": "typescript.fixTSLintError",
-					"group": "TSLint"
+					"group": "TSLint@2"
 				}
 			]
 		},

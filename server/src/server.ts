@@ -11,7 +11,11 @@ import {
 	RequestType,
 	Files,
 	Diagnostic,
-	DiagnosticSeverity
+	DiagnosticSeverity,
+	TextEdit,
+	Position,
+	TextDocument,
+	Range
 } from 'vscode-languageserver';
 import * as tslint from 'tslint'; // this is a dev dependency only
 import Uri from 'vscode-uri';
@@ -19,6 +23,34 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as semver from 'semver';
 import { IConfigurationFile } from 'tslint/lib/configuration';
+import { Replacement } from 'tslint';
+
+interface TSLintAutofixEdit {
+	range: [Position, Position];
+	text: string;
+}
+
+interface RunTSLintParams {
+	readonly textDocument: TextDocumentIdentifier;
+}
+
+namespace RunTSLintRequest {
+	export const type = new RequestType<RunTSLintParams, void, void, void>('textDocument/typescript/runtslint');
+}
+
+interface FixTSLintParams {
+	readonly textDocument: TextDocumentIdentifier;
+}
+
+interface FixTSLintResult {
+	readonly documentVersion: number;
+	readonly edits: TextEdit[];
+	readonly ruleId?: string;
+}
+
+namespace FixTSLintRequest {
+	export const type = new RequestType<FixTSLintParams, FixTSLintResult, void, void>('textDocument/tslint/fixtslint');
+}
 
 // Create a connection for the server. The connection uses Node's IPC as a transport
 let connection: IConnection = createConnection(new IPCMessageReader(process), new IPCMessageWriter(process));
@@ -59,14 +91,6 @@ connection.onDidChangeWatchedFiles((params) => {
 	});
 });
 
-interface RunTSLintParams {
-	readonly textDocument: TextDocumentIdentifier;
-}
-
-namespace RunTSLintRequest {
-	export const type = new RequestType<RunTSLintParams, void, void, void>('textDocument/typescript/runtslint');
-}
-
 function trace(message: string, verbose?: string): void {
 	connection.tracer.log(message, verbose);
 }
@@ -77,66 +101,16 @@ documents.onDidClose((event) => {
 });
 
 connection.onRequest(RunTSLintRequest.type, async (params) => {
-	let documentUri = params.textDocument.uri;
-	let parsedUri = Uri.parse(params.textDocument.uri);
-	if (parsedUri.scheme !== 'file') {
-		connection.console.error(`Failed to run tslint. The provided document URI ${documentUri} is not a file.`);
-		return;
-	}
-	let filePath = parsedUri.fsPath;
-
-	// Get tslint library
-	let library = document2Library.get(filePath);
-	if (!library) {
-		library = await loadLibrary(filePath);
-		if (!library) {
-			// TODO: handle this case, i.e., install tslint for the user
-			connection.console.error(`Failed to run tslint. Can't find tslint module.`);
-			return;
-		}
-
-		document2Library.set(filePath, library);
-	}
-
-	// Get tslint config
-	let configuration = document2Configuration.get(filePath);
-	if (!configuration) {
-		configuration = getConfiguration(filePath, library);
-		if (!configuration) {
-			// TODO: handle this case, i.e., create tslint config for the user
-			connection.console.error(`Failed to run tslint. No tslint configuration file.`);
-			return;
-		}
-
-		document2Configuration.set(filePath, configuration);
-	}
-
-	// Run tslint on document
-	let contents = documents.get(documentUri).getText();
-	let options: tslint.ILinterOptions = {
-		formatter: "json",
-		fix: false
-	};
-	let linter = getLinterFromLibrary(library);
-	let result: tslint.LintResult;
-
-	if (isTsLintVersion4(library)) {
-		let tslint = new linter(options);
-		tslint.lint(filePath, contents, configuration);
-		result = tslint.getResult();
-	}
-	else {
-		(<any>options).configuration = configuration;
-		let tslint = new (<any>linter)(filePath, contents, options);
-		result = tslint.lint();
-	}
+	let lintErrors = await runTSLint(params.textDocument.uri);
 
 	// Send diagnostics
 	let diagnostics: Diagnostic[] = [];
-	result.failures.forEach(failure => {
-		diagnostics.push(makeDiagnostic(failure))
-	});
-	connection.sendDiagnostics({ uri: documentUri, diagnostics });
+	if (lintErrors) {
+		lintErrors.failures.forEach(failure => {
+			diagnostics.push(makeDiagnostic(failure));
+		});
+	}
+	connection.sendDiagnostics({ uri: params.textDocument.uri, diagnostics });
 });
 
 async function loadLibrary(filePath: string) {
@@ -222,6 +196,120 @@ function makeDiagnostic(problem: tslint.RuleFailure): Diagnostic {
 	};
 
 	return diagnostic;
+}
+
+async function runTSLint(documentUri: string): Promise<tslint.LintResult> {
+	let parsedUri = Uri.parse(documentUri);
+	if (parsedUri.scheme !== 'file') {
+		connection.console.error(`Failed to run tslint. The provided document URI ${documentUri} is not a file.`);
+		return null;
+	}
+	let filePath = parsedUri.fsPath;
+
+	// Get tslint library
+	let library = document2Library.get(filePath);
+	if (!library) {
+		library = await loadLibrary(filePath);
+		if (!library) {
+			// TODO: handle this case, i.e., install tslint for the user
+			connection.console.error(`Failed to run tslint. Can't find tslint module.`);
+			return null;
+		}
+
+		document2Library.set(filePath, library);
+	}
+
+	// Get tslint config
+	let configuration = document2Configuration.get(filePath);
+	if (!configuration) {
+		configuration = getConfiguration(filePath, library);
+		if (!configuration) {
+			// TODO: handle this case, i.e., create tslint config for the user
+			connection.console.error(`Failed to run tslint. No tslint configuration file.`);
+			return null;
+		}
+
+		document2Configuration.set(filePath, configuration);
+	}
+
+	// Run tslint on document
+	let contents = documents.get(documentUri).getText();
+	let options: tslint.ILinterOptions = {
+		formatter: "json",
+		fix: false
+	};
+	let linter = getLinterFromLibrary(library);
+	let result: tslint.LintResult;
+
+	if (isTsLintVersion4(library)) {
+		let tslint = new linter(options);
+		tslint.lint(filePath, contents, configuration);
+		result = tslint.getResult();
+	}
+	else {
+		(<any>options).configuration = configuration;
+		let tslint = new (<any>linter)(filePath, contents, options);
+		result = tslint.lint();
+	}
+
+	return result;
+}
+
+connection.onRequest(FixTSLintRequest.type, async (params) => {
+	let document = documents.get(params.textDocument.uri);
+	let documentVersion = document.version;
+	let lintErrors = await runTSLint(params.textDocument.uri);
+	if (!lintErrors) {
+		return {
+			documentVersion: documentVersion,
+			edits: []
+		};
+	}
+
+	let autoFixes: TSLintAutofixEdit[][] = [];
+	lintErrors.failures.forEach(failure => {
+		// tslint fixes are not available in tslint < 3.17
+		if (failure.getFix && failure.getFix()) {
+			let fix: any = failure.getFix();
+			// in tslint4 a Fix has a replacement property with the Replacements
+			if (fix.replacements) {
+				// tslint4
+				let edits = fix.replacements.map((each: Replacement) => convertReplacementToAutoFix(document, each));
+				if (edits.length > 0) {
+					autoFixes.push(edits);
+				}
+			} else {
+				// in tslint 5 a Fix is a Replacment | Replacement[]
+				if (!Array.isArray(fix)) {
+					fix = [fix];
+				}
+				let edits = fix.map((each: Replacement) => convertReplacementToAutoFix(document, each));
+				if (edits.length > 0) {
+					autoFixes.push(edits);
+				}
+			}
+		}
+	});
+
+	let textEdits: TextEdit[] = [];
+	autoFixes.forEach(fix => {
+		let currentFixTextEdits = fix.map(each => TextEdit.replace(Range.create(each.range[0], each.range[1]), each.text || ''));
+		textEdits = textEdits.concat(currentFixTextEdits);
+	});
+
+	return {
+		documentVersion: documentVersion,
+		edits: textEdits
+	};
+});
+
+function convertReplacementToAutoFix(document: TextDocument, repl: tslint.Replacement): TSLintAutofixEdit {
+	let start: Position = document.positionAt(repl.start);
+	let end: Position = document.positionAt(repl.end);
+	return {
+		range: [start, end],
+		text: repl.text,
+	};
 }
 
 // Listen on the connection

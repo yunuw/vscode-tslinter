@@ -7,7 +7,7 @@
 import * as path from 'path';
 
 import { workspace, ExtensionContext, commands, window } from 'vscode';
-import { LanguageClient, LanguageClientOptions, ServerOptions, TransportKind, RequestType, TextDocumentIdentifier } from 'vscode-languageclient';
+import { LanguageClient, LanguageClientOptions, ServerOptions, TransportKind, RequestType, TextDocumentIdentifier, TextEdit } from 'vscode-languageclient';
 
 interface RunTSLintParams {
 	readonly textDocument: TextDocumentIdentifier;
@@ -15,6 +15,20 @@ interface RunTSLintParams {
 
 namespace RunTSLintRequest {
 	export const type = new RequestType<RunTSLintParams, void, void, void>('textDocument/typescript/runtslint');
+}
+
+interface FixTSLintParams {
+	readonly textDocument: TextDocumentIdentifier;
+}
+
+interface FixTSLintResult {
+	readonly documentVersion: number;
+	readonly edits: TextEdit[];
+	readonly ruleId?: string;
+}
+
+namespace FixTSLintRequest {
+	export const type = new RequestType<FixTSLintParams, FixTSLintResult, void, void>('textDocument/tslint/fixtslint');
 }
 
 export function activate(context: ExtensionContext) {
@@ -51,7 +65,7 @@ export function activate(context: ExtensionContext) {
 		client.start(),
 		// TODO: add status bar so user knows whether tslint is running or not
 		commands.registerCommand('typescript.runTSLint', () => runTSLint(client)),
-		commands.registerCommand('typescript.fixTSLintError', fixTSLintError),
+		commands.registerCommand('typescript.fixTSLintError', () => fixTSLintError(client)),
 	);
 }
 
@@ -61,15 +75,46 @@ function runTSLint(client: LanguageClient) {
 		return;
 	}
 	let uri: string = textEditor.document.uri.toString();
-	client.sendRequest(RunTSLintRequest.type, { textDocument: { uri } }).then((result) => {
-		if (result) {
-			//applyTextEdits(uri, result.documentVersion, result.edits);
-		}
-	}, (error) => {
+	client.sendRequest(RunTSLintRequest.type, { textDocument: { uri } }).then(undefined, (error) => {
 		window.showErrorMessage(`Failed to run tslint. ${error}`);
 	});
 }
 
-function fixTSLintError() {
-	window.showInformationMessage('fix tslint');
+function fixTSLintError(client: LanguageClient) {
+	let textEditor = window.activeTextEditor;
+	if (!textEditor) {
+		return;
+	}
+
+	let uri: string = textEditor.document.uri.toString();
+	client.sendRequest(FixTSLintRequest.type, { textDocument: { uri } }).then(async (result) => {
+		if (result) {
+			await applyTextEdits(client, uri, result.documentVersion, result.edits);
+
+			// Run tslint again to update the diagnostics
+			client.sendRequest(RunTSLintRequest.type, { textDocument: { uri } }).then(undefined, (error) => {
+				window.showErrorMessage(`Failed to run tslint. ${error}`);
+			});
+		}
+	}, (error) => {
+		window.showErrorMessage(`Failed to fix tslint error. ${error}`);
+	});
+}
+
+async function applyTextEdits(client: LanguageClient, uri: string, documentVersion: number, edits: TextEdit[]) {
+	let textEditor = window.activeTextEditor;
+	if (textEditor && textEditor.document.uri.toString() === uri) {
+		if (textEditor.document.version !== documentVersion) {
+			window.showInformationMessage(`TSLint fixes are outdated and can't be applied to the document.`);
+		}
+		await textEditor.edit(mutator => {
+			for (let edit of edits) {
+				mutator.replace(client.protocol2CodeConverter.asRange(edit.range), edit.newText);
+			}
+		}).then((success) => {
+			if (!success) {
+				window.showErrorMessage('Failed to apply TSLint fixes to the document. Please consider opening an issue with steps to reproduce.');
+			}
+		});
+	}
 }
